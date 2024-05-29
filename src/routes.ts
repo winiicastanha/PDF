@@ -6,12 +6,7 @@ import { TDocumentDefinitions } from "pdfmake/interfaces";
 
 const routes = Router();
 
-routes.get("/users", async (request: Request, response: Response) =>{
-    console.log("Hello World")
-
-});
-
-routes.get("/gerar-pdf", (request: Request, response: Response) =>{
+routes.post("/gerar-pdf", (request: Request, response: Response) =>{
     const fonts = {
         Helvetica: {
             normal: 'Helvetica',
