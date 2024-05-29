@@ -1,4 +1,4 @@
 # Definindo os arquivos que não precisam ir para o repositório #
-node_modules/*
+node_modules
+dist
 .env
-.gitignore
