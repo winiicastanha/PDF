@@ -1,2 +1,3 @@
 # Definindo os arquivos que não precisam ir para o repositório #
 node_modules/*
+.env
