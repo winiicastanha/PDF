@@ -1,8 +1,15 @@
 import express from 'express';
 import { routes } from './routes';
 import dotenv from 'dotenv';
+import bodyParser from 'body-parser';
 
-  const app = express();
+const app = express();
+
+// Middleware para processar JSON
+app.use(express.json());
+
+// Middleware para processar dados URL-encoded (formulários)
+app.use(express.urlencoded({ extended: true }));
 
 app.use(routes);
 dotenv.config();
