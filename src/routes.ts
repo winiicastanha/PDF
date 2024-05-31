@@ -4,141 +4,104 @@ import { TDocumentDefinitions } from "pdfmake/interfaces";
 import { verifyToken } from './middleware/verificarToken';
 import path from "path";
 import fs from 'fs';
+import crypto from 'crypto';
+import htmlToPdfmake from 'html-to-pdfmake';
+import { JSDOM } from 'jsdom';
 
 const routes = Router();
 
-routes.post("/gerar-curriculo", verifyToken, (request: Request, response: Response) => {
-    console.log('Request body:', request.body);
+interface Template {
+  name: string;
+  content: string;
+}
 
-    if (!request.body || Object.keys(request.body).length === 0) {
-        return response.status(400).send("O corpo da requisição está vazio ou mal formatado.");
+const templates: Record<string, Template> = {};
+
+const generateToken = (): string => {
+  return crypto.randomBytes(16).toString('hex');
+};
+
+const outputDirectory = path.join(__dirname, '../Documentos/ArquivosGerados');
+
+// Cria a pasta se ela não existir
+if (!fs.existsSync(outputDirectory)) {
+  fs.mkdirSync(outputDirectory, { recursive: true });
+}
+
+const templatesDirectory = path.join(__dirname, '../Documentos/Templates');
+
+// Cria o diretório se ele não existir
+if (!fs.existsSync(templatesDirectory)) {
+  fs.mkdirSync(templatesDirectory, { recursive: true });
+}
+
+
+routes.post('/salvar-template', (request: Request, response: Response) => {
+  const { name, content } = request.body;
+  const token = generateToken();
+
+  templates[token] = { name, content };
+
+  response.json({ token });
+});
+
+routes.post('/gerar-pdf/:token', (request: Request, response: Response) => {
+  const { token } = request.params;
+  const { formData } = request.body;
+
+  const template = templates[token];
+
+  if (!template) {
+    return response.status(404).send('Template não encontrado.');
+  }
+
+  const fonts = {
+    Roboto: {
+      normal: 'Helvetica',
+      bold: 'Helvetica-Bold',
+      italics: 'Helvetica-Oblique',
+      bolditalics: 'Helvetica-BoldOblique',
+    },
+  };
+
+  const printer = new PDFPrinter(fonts);
+
+  // Substituir os placeholders no conteúdo do template
+  let content = template.content;
+  for (const [key, value] of Object.entries(formData)) {
+    const placeholder = new RegExp(`{${key}}`, 'g');
+    content = content.replace(placeholder, String(value));
+  }
+
+  // Criar uma instância de JSDOM para converter HTML para pdfmake
+  const dom = new JSDOM();
+  const converted = htmlToPdfmake(content, { window: dom.window });
+
+  // Definição do documento PDF
+  const docDefinitions: TDocumentDefinitions = {
+    content: converted,
+    defaultStyle: {
+      font: 'Roboto'
     }
-    //definindo variáveis
-    const {
-        unique_id,
-        nome_usuario,
-        nascimento,
-        rua,
-        numero,
-        cidade,
-        estado,
-        complemento,
-        telefone_residencia,
-        telefone_recado,
-        email_user,
-        objetivo_profissional,
-        caracteristicas_perfil,
-        escolaridade,
-        experiencia_profissional,
-        data_finalizacao_coletivo,
-        formacao_complementar,
-        trabalho_voluntario,
-        idioma
-    } = request.body;
+  };
 
-    //verificando se o campo unique_id foi preenchido
-    if (!unique_id) {
-        return response.status(400).send("O campo 'unique_id' é obrigatório.");
-    }
+  const pdfDoc = printer.createPdfKitDocument(docDefinitions);
+  const fileName = `${token}.pdf`;
+  const filePath = path.join(outputDirectory, fileName);
+  const writeStream = fs.createWriteStream(filePath);
 
-    //definindo fontes
-    const fonts = {
-        Inter: {
-            normal: path.join(__dirname, '..', 'fonts', 'Inter-Regular.ttf'),
-            bold: path.join(__dirname, '..', 'fonts', 'Inter-Bold.ttf'),
-            italics: path.join(__dirname, '..', 'fonts', 'Inter-Italic.ttf'),
-            bolditalics: path.join(__dirname, '..', 'fonts', 'Inter-BoldItalic.ttf')
-        }
-    };
-    const printer = new PDFPrinter(fonts);
-    //passando as definições de fonte para a geração do documento
-    const docDefinitions: TDocumentDefinitions = {
-        defaultStyle: { font: "Inter" },
-        content: [
-            
-            //nome
-            { text: `${nome_usuario}`, style: 'fonte_nome' },
-            
-            //dados_pessoais
-            { text: `Data de nascimento: ${nascimento}`, style: 'fonte_dados_pessoais' },
-            { text: `Endereço: ${rua} ${numero} – ${cidade} ${estado}`, style: 'fonte_dados_pessoais'  },
-            { text: `Complemento: ${complemento}`, style: 'fonte_dados_pessoais'  },
-            { text: `Telefone: ${telefone_residencia}`, style: 'fonte_dados_pessoais'  },
-            { text: `Telefone de recado: ${telefone_recado}`, style: 'fonte_dados_pessoais'  },
-            { text: `Email: ${email_user}`, style: 'fonte_dados_pessoais'  },
-            
-            //Objetivos
-            { text: 'OBJETIVOS', style: 'fonte_titulo_itens' },
-            { text: `${objetivo_profissional}` },
-            
-            //Caracteristicas do perfil
-            { text: 'CARACTERÍSTICAS DO PERFIL', style: 'fonte_titulo_itens' },
-            { text: `${caracteristicas_perfil}`, style: 'fonte_itens' },
+  pdfDoc.pipe(writeStream);
 
-            //Escolaridade
-            { text: 'ESCOLARIDADE', style: 'fonte_titulo_itens' },
-            { text: `${escolaridade}`, style: 'fonte_itens' },
-            
-            //Experiência profissional
-            { text: 'EXPERIÊNCIA PROFISSIONAL', style: 'fonte_titulo_itens' },
-            { text: `${experiencia_profissional}`, style: 'fonte_itens'  },
+  pdfDoc.end();
 
-            //Formação complementar
-            { text: 'FORMAÇÃO COMPLEMENTAR', style: 'fonte_titulo_itens' },
-            { text: `Coletivo Online - Preparação para o Mercado de trabalho - Instituto Coca-Cola Brasil - Conclusão: ${data_finalizacao_coletivo}` },
-            { text: `${formacao_complementar}`, style: 'fonte_itens' },
+  writeStream.on('finish', () => {
+    response.json({ message: 'PDF gerado com sucesso', filePath });
+  });
 
-            //Trabalho voluntário
-            { text: 'TRABALHO VOLUNTÁRIO', style: 'fonte_titulo_itens' },
-            { text: `${trabalho_voluntario}`, style: 'fonte_itens' },
-
-            //Idioma
-            { text: 'IDIOMA', style: 'fonte_titulo_itens' },
-            { text: `${idioma}`, style: 'fonte_itens' }
-        ],
-        //definindo estilos dos campos, fontes etc...
-        styles: {
-
-            fonte_nome: {
-                fontSize: 18,
-                margin: [0, 4, 0, 2], // [left, top, right, bottom]
-                bold: true,
-            },
-            fonte_dados_pessoais: {
-                fontSize: 11,
-                margin: [0, 2, 0, 0]
-            },
-            fonte_titulo_itens: {
-                fontSize: 14,
-                margin: [0, 16, 0, 1],
-                bold: true
-            },
-            fonte_itens: {
-                fontSize: 11,
-                margin: [0, 2, 0, 2]
-            }
-        },
-        pageMargins: [60, 60, 60, 60]
-    };
-    //definindo variavel de criação do documento
-    const pdfDoc = printer.createPdfKitDocument(docDefinitions);
-
-    //defindo o path de onde esse arquivo será salvo
-    const outputPath = path.join(__dirname, '..', 'Documentos', 'Curriculos', `${unique_id}_curriculo.pdf`);
-    const writeStream = fs.createWriteStream(outputPath);
-
-    pdfDoc.pipe(writeStream);
-    pdfDoc.end();
-
-    writeStream.on('finish', () => {
-        console.log('PDF gerado e salvo com sucesso em:', outputPath);
-        response.status(200).send(`PDF gerado e salvo com sucesso em: ${outputPath}`);
-    });
-
-    writeStream.on('error', (err) => {
-        console.error('Erro ao salvar o PDF:', err);
-        response.status(500).send('Erro ao salvar o PDF.');
-    });
+  writeStream.on('error', (error) => {
+    console.error('Erro ao salvar o PDF:', error);
+    response.status(500).send('Erro ao salvar o PDF.');
+  });
 });
 
 export { routes };
